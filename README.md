@@ -17,7 +17,6 @@ python anki_apkg_extract.py --apkg /path/to/a.apkg /dir/with/apkg --yes
 
 # or skip prompt via env
 ANKI_EXTRACT_FORCE=1 python anki_apkg_extract.py
-~~~
 ```
 ## Output
 
