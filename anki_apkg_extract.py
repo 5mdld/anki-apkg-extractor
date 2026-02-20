@@ -119,12 +119,12 @@ TEMPLATES_DIR_NAME = "templates"
 MEDIA_DIR_NAME = "medias"
 
 # --- Output Settings ---
-CSV_SEPARATOR = "tab"  # "comma", "tab", "semicolon", "space", "pipe", "colon"
+CSV_SEPARATOR = "tab"    # "comma", "tab", "semicolon", "space", "pipe", "colon"
 CSV_HTML = True          # True: keep HTML, False: strip HTML and media references
 CSV_GUID_COL = True      # Output guid column
 CSV_NOTETYPE_COL = True  # Output notetype column
 CSV_DECK_COL = True      # Output deck column
-CSV_TAG_COL = True      # Output tags column
+CSV_TAG_COL = True       # Output tags column
 
 # ----------------------- Utility -----------------------
 

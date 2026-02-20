@@ -10,7 +10,7 @@ Extract Anki `.apkg` packages into notes + templates + media. Supports Anki coll
 You can configure the output format of `notes.csv` by modifying the global variables at the top of the `anki_apkg_extract.py` script:
 ```python
 # --- Output Settings ---
-CSV_SEPARATOR = "tab"  # "comma", "tab", "semicolon", "space", "pipe", "colon"
+CSV_SEPARATOR = "tab"    # "comma", "tab", "semicolon", "space", "pipe", "colon"
 CSV_HTML = True          # True: keep HTML, False: strip HTML and media references
 CSV_GUID_COL = True      # Output guid column
 CSV_NOTETYPE_COL = True  # Output notetype column
