@@ -6,6 +6,18 @@ Extract Anki `.apkg` packages into notes + templates + media. Supports Anki coll
 - Python ≥ 3.8
 - Optional for 21b: `pip install "zstandard>=0.19" "protobuf>=4.21"`
 
+## Configuration
+You can configure the output format of `notes.csv` by modifying the global variables at the top of the `anki_apkg_extract.py` script:
+```python
+# --- Output Settings ---
+CSV_SEPARATOR = "tab"  # "comma", "tab", "semicolon", "space", "pipe", "colon"
+CSV_HTML = True          # True: keep HTML, False: strip HTML and media references
+CSV_GUID_COL = True      # Output guid column
+CSV_NOTETYPE_COL = True  # Output notetype column
+CSV_DECK_COL = True      # Output deck column
+CSV_TAG_COL = True       # Output tags column
+```
+
 ## Usage
 
 ```bash

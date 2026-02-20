@@ -117,7 +117,14 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NOTES_CSV_NAME = "notes.csv"
 TEMPLATES_DIR_NAME = "templates"
 MEDIA_DIR_NAME = "medias"
-CSV_DELIMITER = ','
+
+# --- Output Settings ---
+CSV_SEPARATOR = "tab"  # "comma", "tab", "semicolon", "space", "pipe", "colon"
+CSV_HTML = True          # True: keep HTML, False: strip HTML and media references
+CSV_GUID_COL = True      # Output guid column
+CSV_NOTETYPE_COL = True  # Output notetype column
+CSV_DECK_COL = True      # Output deck column
+CSV_TAG_COL = True      # Output tags column
 
 # ----------------------- Utility -----------------------
 
@@ -420,16 +427,51 @@ def write_templates_from_legacy(db_path: str, out_dir: str) -> None:
 # ----------------------- Notes CSV -----------------------
 
 def query_notes_with_deck(db_path: str) -> List[Tuple]:
-    """Return (note_id, fields, tags, min_deck_id) for notes that have cards."""
+    """Return (note_id, guid, ntid, flds, tags, min_deck_id) for notes that have cards."""
     with SQLiteDB(db_path) as db:
-        query = """
-        SELECT notes.id, notes.flds, notes.tags, MIN(cards.did)
+        cols = db.columns("notes")
+        nt_col = "mid"
+        if "ntid" in cols:
+            nt_col = "ntid"
+        elif "model_id" in cols:
+            nt_col = "model_id"
+        query = f"""
+        SELECT notes.id, notes.guid, notes.{nt_col}, notes.flds, notes.tags, MIN(cards.did)
         FROM notes
         JOIN cards ON cards.nid = notes.id
         GROUP BY notes.id
         """
         rows = db.execute(query)
         return rows
+
+def get_notetype_map(db_path: str, has21b: bool) -> Dict[str, str]:
+    """Return mapping of notetype ID to notetype name."""
+    nt_map = {}
+    with SQLiteDB(db_path) as db:
+        if has21b and "notetypes" in db.tables():
+            nt_cols = db.columns("notetypes")
+            nt_id_col = "id" if "id" in nt_cols else None
+            nt_name_col = "name" if "name" in nt_cols else None
+            nt_cfg_col = "config" if "config" in nt_cols else None
+            if nt_id_col and (nt_name_col or nt_cfg_col):
+                query = f"SELECT {nt_id_col}, {nt_name_col if nt_name_col else 'NULL'}, {nt_cfg_col if nt_cfg_col else 'NULL'} FROM notetypes"
+                for r in db.execute(query):
+                    ntid, ntname, ntcfg = r
+                    if not ntname and ntcfg:
+                        info = pb_get_notetype_config(ntcfg)
+                        ntname = info.get("name")
+                    nt_map[str(ntid)] = ntname or f"Notetype_{ntid}"
+        else:
+            if "col" in db.tables():
+                rows = db.execute("SELECT models FROM col")
+                if rows and rows[0][0]:
+                    try:
+                        models = json.loads(rows[0][0])
+                        for k, v in models.items():
+                            nt_map[str(k)] = v.get("name", f"Model_{k}")
+                    except json.JSONDecodeError:
+                        pass
+    return nt_map
 
 def get_deck_map_from_col(db_path: str) -> Dict[str, str]:
     """Legacy 'col.decks' JSON -> {deck_id: deck_name}."""
@@ -448,33 +490,87 @@ def get_deck_map_from_decks_table(db_path: str) -> Dict[str, str]:
         rows = db.rows("decks")
         return {str(r.get("id")): r.get("name", "UnknownDeck") for r in rows}
 
-def write_notes_csv(out_dir: str, deck_map: Dict[str, str], rows: List[Tuple]) -> None:
+def strip_html_regex(text: str) -> str:
+    """Simple regex to remove HTML and media references like [sound:...]."""
+    text = re.sub(r'<[^>]*>', '', text)
+    text = re.sub(r'\[sound:[^\]]+\]', '', text)
+    text = text.replace("&nbsp;", " ")
+    text = text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+    return text
+
+def write_notes_csv(out_dir: str, deck_map: Dict[str, str], nt_map: Dict[str, str], rows: List[Tuple]) -> None:
     """
-    Write notes.csv with Anki import hints.
+    Write notes.csv with configurable Anki import hints and columns.
     - Fields are joined by U+001F in Anki; split and right-pad rows.
-    - First column is deck name; last column is tags.
     """
     notes_csv_path = os.path.join(out_dir, NOTES_CSV_NAME)
     max_fields = 0
-    parsed: List[Tuple[List[str], str, str]] = []
-    for note_id, flds, tags, did in rows:
-        fields = (flds or "").split("\x1f")  # Anki field separator
+    parsed: List[Tuple[List[str], str, str, str, str]] = []
+    for note_id, guid, ntid, flds, tags, did in rows:
+        fields = (flds or "").split("\x1f")
+        if not CSV_HTML:
+            fields = [strip_html_regex(f) for f in fields]
         max_fields = max(max_fields, len(fields))
-        parsed.append((fields, tags or "", str(did) if did is not None else ""))
-    deck_col = 1
-    tags_col = max_fields + 2
+        
+        deck_name = deck_map.get(str(did), "UnknownDeck")
+        deck_name = deck_name.encode("utf-8").replace(b"\x1f", b"::").decode("utf-8")
+        nt_name = nt_map.get(str(ntid), f"Notetype_{ntid}")
+        
+        parsed.append((fields, tags or "", deck_name, nt_name, guid))
+        
+    current_col = 1
+    guid_idx = nt_idx = deck_idx = tags_idx = -1
+    
+    if CSV_GUID_COL:
+        guid_idx = current_col
+        current_col += 1
+    if CSV_NOTETYPE_COL:
+        nt_idx = current_col
+        current_col += 1
+    if CSV_DECK_COL:
+        deck_idx = current_col
+        current_col += 1
+        
+    current_col += max_fields
+    
+    if CSV_TAG_COL:
+        tags_idx = current_col
+        current_col += 1
+        
+    sep_lower = CSV_SEPARATOR.lower()
+    delimiter_map = {
+        'comma': (',', 'comma'),
+        'semicolon': (';', 'semicolon'),
+        'tab': ('\t', 'Tab'),
+        'space': (' ', 'space'),
+        'pipe': ('|', 'pipe'),
+        'colon': (':', 'colon')
+    }
+    delimiter, sep_name = delimiter_map.get(sep_lower, (',', 'comma'))
+    
     with open(notes_csv_path, "w", newline="", encoding="utf-8") as f:
-        # Anki CSV import metadata
-        f.write("#separator:comma\n")
-        f.write("#html:true\n")
-        f.write(f"#deck column:{deck_col}\n")
-        f.write(f"#tags column:{tags_col}\n")
-        w = csv.writer(f, delimiter=CSV_DELIMITER)
-        for fields, tags, did in parsed:
-            deck_name = deck_map.get(str(did), "UnknownDeck")
-            # Keep deck hierarchy; replace Anki's field separator if present
-            deck_name = deck_name.encode("utf-8").replace(b"\x1f", b"::").decode("utf-8")
-            row = [deck_name] + fields + ([""] * (max_fields - len(fields))) + [tags.strip()]
+        f.write(f"#separator:{sep_name}\n")
+        f.write(f"#html:{'true' if CSV_HTML else 'false'}\n")
+        if CSV_GUID_COL:
+            f.write(f"#guid column:{guid_idx}\n")
+        if CSV_NOTETYPE_COL:
+            f.write(f"#notetype column:{nt_idx}\n")
+        if CSV_DECK_COL:
+            f.write(f"#deck column:{deck_idx}\n")
+        if CSV_TAG_COL:
+            f.write(f"#tags column:{tags_idx}\n")
+            
+        w = csv.writer(f, delimiter=delimiter)
+        for fields, tags, deck_name, nt_name, guid in parsed:
+            row = []
+            if CSV_GUID_COL: row.append(guid)
+            if CSV_NOTETYPE_COL: row.append(nt_name)
+            if CSV_DECK_COL: row.append(deck_name)
+            
+            row.extend(fields)
+            row.extend([""] * (max_fields - len(fields)))
+            
+            if CSV_TAG_COL: row.append(tags.strip())
             w.writerow(row)
 
 # ----------------------- Main flow -----------------------
@@ -521,7 +617,8 @@ def process_apkg(apkg_path: str, force: bool = False) -> None:
         process_media_pb_zstd(apkg_dir, MEDIA_DIR_NAME)
         rows = query_notes_with_deck(coll_path)
         deck_map = get_deck_map_from_decks_table(coll_path) or get_deck_map_from_col(coll_path)
-        write_notes_csv(apkg_dir, deck_map, rows)
+        nt_map = get_notetype_map(coll_path, has21b=True)
+        write_notes_csv(apkg_dir, deck_map, nt_map, rows)
         write_templates_from_21b(coll_path, apkg_dir)
         clean_unrelated(apkg_dir)
         print(f"Processed {apkg_path} -> {apkg_dir}")
@@ -533,7 +630,8 @@ def process_apkg(apkg_path: str, force: bool = False) -> None:
         process_media_json(apkg_dir, MEDIA_DIR_NAME)
         rows = query_notes_with_deck(db_path)
         deck_map = get_deck_map_from_col(db_path)
-        write_notes_csv(apkg_dir, deck_map, rows)
+        nt_map = get_notetype_map(db_path, has21b=False)
+        write_notes_csv(apkg_dir, deck_map, nt_map, rows)
         write_templates_from_legacy(db_path, apkg_dir)
         clean_unrelated(apkg_dir)
         print(f"Processed {apkg_path} -> {apkg_dir}")
