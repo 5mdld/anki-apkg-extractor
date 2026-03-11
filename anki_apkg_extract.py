@@ -251,6 +251,15 @@ def pb_parse_media_entries(data: Optional[bytes]) -> Dict[int, Dict[str, object]
 
 # ----------------------- Extraction paths -----------------------
 
+def write_split_template_files(templates_dir: str, base_name: str, front_html: str, back_html: str) -> None:
+    front_path = os.path.join(templates_dir, f"{base_name}-front.html")
+    with open(front_path, "w", encoding="utf-8") as f:
+        f.write(front_html)
+
+    back_path = os.path.join(templates_dir, f"{base_name}-back.html")
+    with open(back_path, "w", encoding="utf-8") as f:
+        f.write(back_html)
+
 def extract_apkg(apkg_path: str, out_dir: str) -> List[str]:
     """Extract the .apkg into out_dir and return contained names."""
     ensure_dir(out_dir)
@@ -386,10 +395,8 @@ def write_templates_from_21b(db_path: str, out_dir: str) -> None:
                 tpl_info = pb_get_template_config(tplcfg or b"")
                 q = tpl_info.get("qFormat", "")
                 a = tpl_info.get("aFormat", "")
-                tpl_filename = f"{nt_name_sf}-{safe_filename(tplname or 'template')}.html"
-                with open(os.path.join(templates_dir, tpl_filename), "w", encoding="utf-8") as f:
-                    # Export q + single newline + a (consistent with main_new.py)
-                    f.write(q + "\n" + a)
+                tpl_base_name = f"{nt_name_sf}-{safe_filename(tplname or 'template')}"
+                write_split_template_files(templates_dir, tpl_base_name, q, a)
 
 def write_templates_from_legacy(db_path: str, out_dir: str) -> None:
     """Export CSS and templates from legacy 'col.models' JSON. Only for used models if possible."""
@@ -420,9 +427,8 @@ def write_templates_from_legacy(db_path: str, out_dir: str) -> None:
                 tpl_name = t.get("name", "UnnamedTemplate")
                 qfmt = t.get("qfmt", "")
                 afmt = t.get("afmt", "")
-                tpl_file = f"{safe_filename(model_name)}-{safe_filename(tpl_name)}.html"
-                with open(os.path.join(templates_dir, tpl_file), "w", encoding="utf-8") as f:
-                    f.write(qfmt + "\n\n" + afmt + "\n")
+                tpl_base_name = f"{safe_filename(model_name)}-{safe_filename(tpl_name)}"
+                write_split_template_files(templates_dir, tpl_base_name, qfmt, afmt)
 
 # ----------------------- Notes CSV -----------------------
 
